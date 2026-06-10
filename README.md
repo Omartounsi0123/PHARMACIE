@@ -11,6 +11,8 @@ A comprehensive C application for managing pharmacy medication inventory, suppli
 
 ## Building and Running
 ```bash
-gcc -o pharmacy main.c
+gcc -Wall -Wextra -std=c11 -o pharmacy main.c
 ./pharmacy
 ```
+
+The program automatically loads data from `TxtMed.txt` at startup and can save stock changes back to this file from the menu.
