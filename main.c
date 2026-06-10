@@ -7,6 +7,7 @@
 #define MAX_MEDICATIONS 200
 #define MAX_SUPPLIERS 3
 #define FIELD_SIZE 100
+#define MAX_LINE_LENGTH 1200
 #define DATA_FILE "TxtMed.txt"
 #define TAX_RATE 0.19f
 
@@ -48,6 +49,9 @@ Date readDate(const char *label);
 int isValidDate(Date date);
 int compareDates(Date a, Date b);
 int isExpired(Date date);
+void safeStringCopy(char *dest, const char *src, size_t size);
+int parseIntToken(const char *token, int defaultValue);
+float parseFloatToken(const char *token, float defaultValue);
 int findMedicationByNumber(const Medication meds[], int count, int number);
 int findMedicationByLotReference(const Medication meds[], int count, const char *reference);
 int containsIgnoreCase(const char *text, const char *pattern);
@@ -125,7 +129,29 @@ Date readDate(const char *label) {
 }
 
 int isValidDate(Date date) {
-    return date.year >= 1900 && date.month >= 1 && date.month <= 12 && date.day >= 1 && date.day <= 31;
+    int daysInMonth;
+    int isLeapYear;
+
+    if (date.year < 1900 || date.month < 1 || date.month > 12 || date.day < 1) {
+        return 0;
+    }
+
+    isLeapYear = (date.year % 400 == 0) || (date.year % 4 == 0 && date.year % 100 != 0);
+    switch (date.month) {
+        case 2:
+            daysInMonth = isLeapYear ? 29 : 28;
+            break;
+        case 4:
+        case 6:
+        case 9:
+        case 11:
+            daysInMonth = 30;
+            break;
+        default:
+            daysInMonth = 31;
+    }
+
+    return date.day <= daysInMonth;
 }
 
 int compareDates(Date a, Date b) {
@@ -149,7 +175,44 @@ int isExpired(Date date) {
     time_t now = time(NULL);
     struct tm *today = localtime(&now);
     Date current = {today->tm_mday, today->tm_mon + 1, today->tm_year + 1900};
-    return compareDates(date, current) <= 0;
+    return compareDates(date, current) < 0;
+}
+
+void safeStringCopy(char *dest, const char *src, size_t size) {
+    strncpy(dest, src ? src : "", size - 1);
+    dest[size - 1] = '\0';
+}
+
+int parseIntToken(const char *token, int defaultValue) {
+    char *endPtr;
+    long value;
+
+    if (token == NULL) {
+        return defaultValue;
+    }
+
+    value = strtol(token, &endPtr, 10);
+    if (endPtr == token) {
+        return defaultValue;
+    }
+
+    return (int)value;
+}
+
+float parseFloatToken(const char *token, float defaultValue) {
+    char *endPtr;
+    float value;
+
+    if (token == NULL) {
+        return defaultValue;
+    }
+
+    value = strtof(token, &endPtr);
+    if (endPtr == token) {
+        return defaultValue;
+    }
+
+    return value;
 }
 
 int findMedicationByNumber(const Medication meds[], int count, int number) {
@@ -217,7 +280,7 @@ void printMedication(const Medication *med) {
     printf("Lot reference: %s\n", strlen(med->lot.reference) == 0 ? "N/A" : med->lot.reference);
     printf("Date fabrication: ");
     printDate(med->lot.manufacturingDate);
-    printf("\nDate preemption: ");
+    printf("\nDate peremption: ");
     printDate(med->lot.expirationDate);
     printf("\nPrix: %.3f\n", med->price);
     printf("Quantite en stock: %d\n", med->quantityInStock);
@@ -253,7 +316,7 @@ void addMedication(Medication meds[], int *count) {
         med.lot.expirationDate = (Date){0, 0, 0};
     } else {
         med.lot.manufacturingDate = readDate("Date fabrication");
-        med.lot.expirationDate = readDate("Date preemption");
+        med.lot.expirationDate = readDate("Date peremption");
     }
 
     med.price = readFloat("Prix: ");
@@ -542,7 +605,7 @@ void saveData(const Medication meds[], int count) {
 
 void loadData(Medication meds[], int *count) {
     FILE *file = fopen(DATA_FILE, "r");
-    char line[1200];
+    char line[MAX_LINE_LENGTH];
     int i;
 
     *count = 0;
@@ -556,7 +619,16 @@ void loadData(Medication meds[], int *count) {
         return;
     }
 
-    *count = atoi(line);
+    {
+        char *endPtr;
+        long parsedCount = strtol(line, &endPtr, 10);
+        if (endPtr == line) {
+            printf("Avertissement: format de fichier invalide.\n");
+            fclose(file);
+            return;
+        }
+        *count = (int)parsedCount;
+    }
     if (*count < 0) {
         *count = 0;
     }
@@ -569,6 +641,8 @@ void loadData(Medication meds[], int *count) {
         int j;
 
         if (fgets(line, sizeof(line), file) == NULL) {
+            printf("Avertissement: fichier de donnees corrompu a la ligne %d, %d medicament(s) charge(s).\n",
+                   i + 2, i);
             *count = i;
             break;
         }
@@ -580,49 +654,46 @@ void loadData(Medication meds[], int *count) {
             *count = i;
             break;
         }
-        meds[i].number = atoi(token);
+        meds[i].number = parseIntToken(token, 0);
 
         token = strtok(NULL, ";");
-        strncpy(meds[i].name, token ? token : "", sizeof(meds[i].name) - 1);
-        meds[i].name[sizeof(meds[i].name) - 1] = '\0';
+        safeStringCopy(meds[i].name, token, sizeof(meds[i].name));
 
         token = strtok(NULL, ";");
-        strncpy(meds[i].laboratory, token ? token : "", sizeof(meds[i].laboratory) - 1);
-        meds[i].laboratory[sizeof(meds[i].laboratory) - 1] = '\0';
+        safeStringCopy(meds[i].laboratory, token, sizeof(meds[i].laboratory));
 
         token = strtok(NULL, ";");
-        strncpy(meds[i].lot.reference, token ? token : "", sizeof(meds[i].lot.reference) - 1);
-        meds[i].lot.reference[sizeof(meds[i].lot.reference) - 1] = '\0';
+        safeStringCopy(meds[i].lot.reference, token, sizeof(meds[i].lot.reference));
 
         token = strtok(NULL, ";");
-        meds[i].lot.manufacturingDate.day = token ? atoi(token) : 0;
+        meds[i].lot.manufacturingDate.day = parseIntToken(token, 0);
 
         token = strtok(NULL, ";");
-        meds[i].lot.manufacturingDate.month = token ? atoi(token) : 0;
+        meds[i].lot.manufacturingDate.month = parseIntToken(token, 0);
 
         token = strtok(NULL, ";");
-        meds[i].lot.manufacturingDate.year = token ? atoi(token) : 0;
+        meds[i].lot.manufacturingDate.year = parseIntToken(token, 0);
 
         token = strtok(NULL, ";");
-        meds[i].lot.expirationDate.day = token ? atoi(token) : 0;
+        meds[i].lot.expirationDate.day = parseIntToken(token, 0);
 
         token = strtok(NULL, ";");
-        meds[i].lot.expirationDate.month = token ? atoi(token) : 0;
+        meds[i].lot.expirationDate.month = parseIntToken(token, 0);
 
         token = strtok(NULL, ";");
-        meds[i].lot.expirationDate.year = token ? atoi(token) : 0;
+        meds[i].lot.expirationDate.year = parseIntToken(token, 0);
 
         token = strtok(NULL, ";");
-        meds[i].price = token ? (float)atof(token) : 0.0f;
+        meds[i].price = parseFloatToken(token, 0.0f);
 
         token = strtok(NULL, ";");
-        meds[i].quantityInStock = token ? atoi(token) : 0;
+        meds[i].quantityInStock = parseIntToken(token, 0);
 
         token = strtok(NULL, ";");
-        meds[i].storageSector = token ? atoi(token) : 1;
+        meds[i].storageSector = parseIntToken(token, 1);
 
         token = strtok(NULL, ";");
-        meds[i].supplierCount = token ? atoi(token) : 0;
+        meds[i].supplierCount = parseIntToken(token, 0);
         if (meds[i].supplierCount < 0) {
             meds[i].supplierCount = 0;
         }
@@ -632,17 +703,13 @@ void loadData(Medication meds[], int *count) {
 
         for (j = 0; j < meds[i].supplierCount; j++) {
             token = strtok(NULL, ";");
-            strncpy(meds[i].suppliers[j].name, token ? token : "", sizeof(meds[i].suppliers[j].name) - 1);
-            meds[i].suppliers[j].name[sizeof(meds[i].suppliers[j].name) - 1] = '\0';
+            safeStringCopy(meds[i].suppliers[j].name, token, sizeof(meds[i].suppliers[j].name));
 
             token = strtok(NULL, ";");
-            strncpy(meds[i].suppliers[j].address, token ? token : "",
-                    sizeof(meds[i].suppliers[j].address) - 1);
-            meds[i].suppliers[j].address[sizeof(meds[i].suppliers[j].address) - 1] = '\0';
+            safeStringCopy(meds[i].suppliers[j].address, token, sizeof(meds[i].suppliers[j].address));
 
             token = strtok(NULL, ";");
-            strncpy(meds[i].suppliers[j].phone, token ? token : "", sizeof(meds[i].suppliers[j].phone) - 1);
-            meds[i].suppliers[j].phone[sizeof(meds[i].suppliers[j].phone) - 1] = '\0';
+            safeStringCopy(meds[i].suppliers[j].phone, token, sizeof(meds[i].suppliers[j].phone));
         }
     }
 
